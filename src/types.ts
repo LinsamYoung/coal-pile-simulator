@@ -3,6 +3,8 @@ export type ToolMode = 'deposit' | 'excavate'
 export interface PointCloudData {
   positions: Float32Array
   intensities?: Float32Array
+  /** Original bytes are retained so composite export can preserve its PLY schema and encoding. */
+  sourceBuffer: ArrayBuffer
   pointCount: number
   sourceName: string
   sourceMin: [number, number, number]

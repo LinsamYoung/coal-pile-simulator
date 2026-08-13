@@ -28,7 +28,15 @@ export function parsePly(buffer: ArrayBuffer, sourceName: string): PointCloudDat
   // scalar intensity ourselves so it survives both ASCII and binary imports.
   const intensities = extractVertexScalarProperty(buffer, 'intensity')
   geometry.dispose()
-  return { positions, intensities, pointCount: sourcePosition.count, sourceName, sourceMin, sourceMax }
+  return {
+    positions,
+    intensities,
+    sourceBuffer: buffer,
+    pointCount: sourcePosition.count,
+    sourceName,
+    sourceMin,
+    sourceMax,
+  }
 }
 
 type PlyProperty =

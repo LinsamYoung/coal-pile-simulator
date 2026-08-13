@@ -1,4 +1,17 @@
-import type { RadarPoint } from '../types'
+import type { PointCloudData, RadarPoint } from '../types'
+
+type PlyProperty =
+  | { kind: 'scalar'; type: string; name: string }
+  | { kind: 'list'; countType: string; itemType: string; name: string }
+
+interface PlySchema {
+  format: 'ascii' | 'binary_little_endian' | 'binary_big_endian'
+  vertexCount: number
+  properties: PlyProperty[]
+  header: string
+  dataOffset: number
+  eol: '\n' | '\r\n'
+}
 
 export function radarPointsToCsv(points: RadarPoint[]): Blob {
   const rows = ['x,y,z,range,azimuth,elevation,intensity']
@@ -32,6 +45,246 @@ export function radarPointsToPly(points: RadarPoint[]): Blob {
     Math.max(0, Math.min(255, Math.round(point.intensity))),
   ].join(' ')).join('\n')
   return new Blob([`${header}\n${body}\n`], { type: 'application/octet-stream' })
+}
+
+/**
+ * Appends generated coal/radar points to the original PLY vertex element.
+ *
+ * The original encoding, vertex property order/types, non-vertex elements and
+ * original vertex records are preserved. Generated local coordinates are
+ * transformed back to the source engineering coordinate system.
+ */
+export function appendPointsToSourcePly(source: PointCloudData, points: RadarPoint[]): Blob {
+  if (points.length === 0) throw new Error('没有可追加的煤堆点。')
+  const schema = parsePlySchema(source.sourceBuffer)
+  const positionNames = new Set(
+    schema.properties.filter((property) => property.kind === 'scalar').map((property) => property.name),
+  )
+  if (!positionNames.has('x') || !positionNames.has('y') || !positionNames.has('z')) {
+    throw new Error('原始 PLY 顶点缺少 x、y 或 z 属性，无法执行合并导出。')
+  }
+
+  const mergedHeader = schema.header.replace(
+    /(^|\r?\n)(element\s+vertex\s+)\d+(?=\r?\n)/,
+    `$1$2${schema.vertexCount + points.length}`,
+  )
+  const headerBytes = new TextEncoder().encode(mergedHeader)
+  const intensityRange = getSourceIntensityRange(source)
+  if (schema.format === 'ascii') {
+    return appendAsciiVertices(source, points, schema, headerBytes, intensityRange)
+  }
+  return appendBinaryVertices(source, points, schema, headerBytes, intensityRange)
+}
+
+function parsePlySchema(buffer: ArrayBuffer): PlySchema {
+  const bytes = new Uint8Array(buffer)
+  const preview = new TextDecoder('ascii').decode(bytes.subarray(0, Math.min(bytes.length, 1024 * 1024)))
+  const headerEnd = /end_header(\r?\n)/.exec(preview)
+  if (!headerEnd) throw new Error('PLY 文件头不完整。')
+  const dataOffset = headerEnd.index + headerEnd[0].length
+  const header = preview.slice(0, dataOffset)
+  const formatMatch = /^format\s+(ascii|binary_little_endian|binary_big_endian)\s+/m.exec(header)
+  if (!formatMatch) throw new Error('PLY 编码格式不受支持。')
+
+  let vertexCount = 0
+  let readingVertex = false
+  const properties: PlyProperty[] = []
+  for (const rawLine of header.split(/\r?\n/)) {
+    const parts = rawLine.trim().split(/\s+/)
+    if (parts[0] === 'element') {
+      readingVertex = parts[1] === 'vertex'
+      if (readingVertex) vertexCount = Number(parts[2])
+    } else if (readingVertex && parts[0] === 'property') {
+      if (parts[1] === 'list') {
+        properties.push({ kind: 'list', countType: parts[2], itemType: parts[3], name: parts[4] })
+      } else {
+        properties.push({ kind: 'scalar', type: parts[1], name: parts[2] })
+      }
+    }
+  }
+  if (!Number.isFinite(vertexCount) || vertexCount < 0 || properties.length === 0) {
+    throw new Error('PLY 顶点定义不正确。')
+  }
+  return {
+    format: formatMatch[1] as PlySchema['format'],
+    vertexCount,
+    properties,
+    header,
+    dataOffset,
+    eol: headerEnd[1] as '\n' | '\r\n',
+  }
+}
+
+function appendAsciiVertices(
+  source: PointCloudData,
+  points: RadarPoint[],
+  schema: PlySchema,
+  headerBytes: Uint8Array,
+  intensityRange: readonly [number, number],
+): Blob {
+  const body = new TextDecoder('ascii').decode(new Uint8Array(source.sourceBuffer, schema.dataOffset))
+  const lines = body.split(/\r?\n/)
+  if (lines.length < schema.vertexCount) throw new Error('PLY 顶点数量与文件内容不一致。')
+  const originalVertices = lines.slice(0, schema.vertexCount)
+  const suffix = lines.slice(schema.vertexCount)
+  const appended = points.map((point) => schema.properties.map((property) => {
+    if (property.kind === 'list') return '0'
+    return formatScalar(propertyValue(property.name, point, source, intensityRange), property.type)
+  }).join(' '))
+  const mergedBody = [...originalVertices, ...appended, ...suffix].join(schema.eol)
+  return new Blob([headerBytes.buffer as ArrayBuffer, mergedBody], { type: 'application/octet-stream' })
+}
+
+function appendBinaryVertices(
+  source: PointCloudData,
+  points: RadarPoint[],
+  schema: PlySchema,
+  headerBytes: Uint8Array,
+  intensityRange: readonly [number, number],
+): Blob {
+  const view = new DataView(source.sourceBuffer)
+  const littleEndian = schema.format === 'binary_little_endian'
+  let vertexEnd = schema.dataOffset
+  for (let vertex = 0; vertex < schema.vertexCount; vertex += 1) {
+    for (const property of schema.properties) {
+      if (property.kind === 'scalar') {
+        vertexEnd += scalarByteSize(property.type)
+      } else {
+        const count = readBinaryScalar(view, vertexEnd, property.countType, littleEndian)
+        vertexEnd += scalarByteSize(property.countType) + count * scalarByteSize(property.itemType)
+      }
+    }
+  }
+  if (vertexEnd > source.sourceBuffer.byteLength) throw new Error('二进制 PLY 顶点数据不完整。')
+
+  const recordSize = schema.properties.reduce((size, property) => {
+    return size + scalarByteSize(property.kind === 'scalar' ? property.type : property.countType)
+  }, 0)
+  const appendedBuffer = new ArrayBuffer(recordSize * points.length)
+  const appendedView = new DataView(appendedBuffer)
+  let offset = 0
+  for (const point of points) {
+    for (const property of schema.properties) {
+      if (property.kind === 'list') {
+        offset = writeBinaryScalar(appendedView, offset, property.countType, 0, littleEndian)
+      } else {
+        offset = writeBinaryScalar(
+          appendedView,
+          offset,
+          property.type,
+          propertyValue(property.name, point, source, intensityRange),
+          littleEndian,
+        )
+      }
+    }
+  }
+  return new Blob([
+    headerBytes.buffer as ArrayBuffer,
+    source.sourceBuffer.slice(schema.dataOffset, vertexEnd),
+    appendedBuffer,
+    source.sourceBuffer.slice(vertexEnd),
+  ], { type: 'application/octet-stream' })
+}
+
+function propertyValue(
+  name: string,
+  point: RadarPoint,
+  source: PointCloudData,
+  intensityRange: readonly [number, number],
+): number {
+  switch (name.toLowerCase()) {
+    case 'x': return point.x + source.sourceMin[0]
+    case 'y': return point.y + source.sourceMin[1]
+    case 'z': return point.z + source.sourceMin[2]
+    case 'intensity': case 'scalar_intensity': return mapIntensity(point.intensity, intensityRange)
+    case 'range': return point.range
+    case 'azimuth': return point.azimuth
+    case 'elevation': return point.elevation
+    case 'red': case 'r': case 'green': case 'g': case 'blue': case 'b': return point.intensity
+    case 'alpha': case 'a': return 255
+    default: return 0
+  }
+}
+
+function getSourceIntensityRange(source: PointCloudData): readonly [number, number] {
+  if (!source.intensities || source.intensities.length === 0) return [0, 255]
+  let min = Infinity
+  let max = -Infinity
+  for (const value of source.intensities) {
+    if (!Number.isFinite(value)) continue
+    min = Math.min(min, value)
+    max = Math.max(max, value)
+  }
+  return Number.isFinite(min) && Number.isFinite(max) ? [min, max] : [0, 255]
+}
+
+function mapIntensity(value: number, range: readonly [number, number]): number {
+  if (range[0] === range[1]) return range[0]
+  return range[0] + Math.max(0, Math.min(255, value)) / 255 * (range[1] - range[0])
+}
+
+function formatScalar(value: number, type: string): string {
+  if (isIntegerType(type)) return String(normalizeInteger(value, type))
+  return Number.isFinite(value) ? value.toFixed(type === 'double' || type === 'float64' ? 9 : 6) : '0'
+}
+
+function scalarByteSize(type: string): number {
+  if (['char', 'uchar', 'int8', 'uint8'].includes(type)) return 1
+  if (['short', 'ushort', 'int16', 'uint16'].includes(type)) return 2
+  if (['int', 'uint', 'float', 'int32', 'uint32', 'float32'].includes(type)) return 4
+  if (['double', 'float64'].includes(type)) return 8
+  throw new Error(`不支持的 PLY 标量类型：${type}`)
+}
+
+function isIntegerType(type: string): boolean {
+  return !['float', 'float32', 'double', 'float64'].includes(type)
+}
+
+function normalizeInteger(value: number, type: string): number {
+  const rounded = Math.round(Number.isFinite(value) ? value : 0)
+  switch (type) {
+    case 'char': case 'int8': return Math.max(-128, Math.min(127, rounded))
+    case 'uchar': case 'uint8': return Math.max(0, Math.min(255, rounded))
+    case 'short': case 'int16': return Math.max(-32768, Math.min(32767, rounded))
+    case 'ushort': case 'uint16': return Math.max(0, Math.min(65535, rounded))
+    case 'uint': case 'uint32': return Math.max(0, Math.min(4294967295, rounded))
+    default: return Math.max(-2147483648, Math.min(2147483647, rounded))
+  }
+}
+
+function readBinaryScalar(view: DataView, offset: number, type: string, littleEndian: boolean): number {
+  switch (type) {
+    case 'char': case 'int8': return view.getInt8(offset)
+    case 'uchar': case 'uint8': return view.getUint8(offset)
+    case 'short': case 'int16': return view.getInt16(offset, littleEndian)
+    case 'ushort': case 'uint16': return view.getUint16(offset, littleEndian)
+    case 'int': case 'int32': return view.getInt32(offset, littleEndian)
+    case 'uint': case 'uint32': return view.getUint32(offset, littleEndian)
+    case 'float': case 'float32': return view.getFloat32(offset, littleEndian)
+    case 'double': case 'float64': return view.getFloat64(offset, littleEndian)
+    default: throw new Error(`不支持的 PLY 标量类型：${type}`)
+  }
+}
+
+function writeBinaryScalar(
+  view: DataView,
+  offset: number,
+  type: string,
+  value: number,
+  littleEndian: boolean,
+): number {
+  const integer = normalizeInteger(value, type)
+  switch (type) {
+    case 'char': case 'int8': view.setInt8(offset, integer); return offset + 1
+    case 'uchar': case 'uint8': view.setUint8(offset, integer); return offset + 1
+    case 'short': case 'int16': view.setInt16(offset, integer, littleEndian); return offset + 2
+    case 'ushort': case 'uint16': view.setUint16(offset, integer, littleEndian); return offset + 2
+    case 'int': case 'int32': view.setInt32(offset, integer, littleEndian); return offset + 4
+    case 'uint': case 'uint32': view.setUint32(offset, integer, littleEndian); return offset + 4
+    case 'float': case 'float32': view.setFloat32(offset, value, littleEndian); return offset + 4
+    case 'double': case 'float64': view.setFloat64(offset, value, littleEndian); return offset + 8
+    default: throw new Error(`不支持的 PLY 标量类型：${type}`)
+  }
 }
 
 export function downloadBlob(blob: Blob, filename: string): void {

@@ -1,7 +1,7 @@
 import './style.css'
 import type { BrushSettings, PointCloudData, RadarConfig, RadarPoint, ToolMode } from './types'
 import { loadPlyFromUrl, parsePly } from './io/PlyImporter'
-import { radarPointsToCsv, radarPointsToPly, downloadBlob } from './io/PointCloudExporter'
+import { appendPointsToSourcePly, radarPointsToCsv, downloadBlob } from './io/PointCloudExporter'
 import { buildGroundGrid } from './simulation/GroundGridBuilder'
 import { applyBrushStroke } from './simulation/BrushEngine'
 import { calculateCoalStatistics } from './simulation/VolumeCalculator'
@@ -96,10 +96,10 @@ app.innerHTML = `
             <button class="primary-button" id="generate-radar" type="button"><span>⌁</span> 生成并预览点云</button>
             <div class="radar-result" id="radar-result"><span>扫描结果</span><b>尚未生成</b></div>
             <div class="export-buttons">
-              <button id="export-ply" type="button">导出 PLY</button>
+              <button id="export-ply" type="button">导出合并 PLY</button>
               <button id="export-csv" type="button">导出 CSV</button>
             </div>
-            <p class="method-note"><i>i</i> 几何型雷达风格输出，不包含 RCS、多径、Doppler 或 CFAR 信号链。</p>
+            <p class="method-note"><i>i</i> PLY 会保留原文件格式与顶点属性并追加煤堆点；CSV 为雷达测量明细。</p>
           </div>
         </section>
       </div>
@@ -130,6 +130,7 @@ app.innerHTML = `
 
 const scene = new SceneController(element('viewport'))
 let field: HeightField | null = null
+let sourcePointCloud: PointCloudData | null = null
 let radarPoints: RadarPoint[] = []
 let density = 0.85
 let painting = false
@@ -329,6 +330,7 @@ async function acceptPointCloud(data: PointCloudData): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 20))
   const result = buildGroundGrid(data.positions, 0.5)
   field = result.field
+  sourcePointCloud = data
   radarPoints = []
   scene.setPointCloud(data)
   scene.setHeightField(field)
@@ -386,9 +388,15 @@ function generateRadar(): void {
 function exportRadar(format: 'ply' | 'csv'): void {
   if (radarPoints.length === 0) return showToast('请先生成雷达点云', true)
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
-  const blob = format === 'ply' ? radarPointsToPly(radarPoints) : radarPointsToCsv(radarPoints)
-  downloadBlob(blob, `radar_coal_${timestamp}.${format}`)
-  showToast(`已导出 ${format.toUpperCase()} 点云`)
+  if (format === 'ply') {
+    if (!sourcePointCloud) return showToast('原始 PLY 数据不可用', true)
+    const blob = appendPointsToSourcePly(sourcePointCloud, radarPoints)
+    downloadBlob(blob, `coalfield_merged_${timestamp}.ply`)
+    showToast(`已导出合并 PLY：${(sourcePointCloud.pointCount + radarPoints.length).toLocaleString()} 点`)
+    return
+  }
+  downloadBlob(radarPointsToCsv(radarPoints), `radar_coal_${timestamp}.csv`)
+  showToast('已导出雷达测量 CSV')
 }
 
 function updateStatistics(): void {
