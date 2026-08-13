@@ -1,10 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import type { BrushSettings, RadarConfig } from '../types'
+import type { BrushSettings } from '../types'
 import { HeightField } from './HeightField'
 import { buildGroundGrid } from './GroundGridBuilder'
 import { applyBrushStroke } from './BrushEngine'
 import { calculateCoalStatistics } from './VolumeCalculator'
-import { generateRadarPointCloud } from './RadarStylePointCloud'
 
 describe('ground grid', () => {
   it('takes the lowest point and fills empty cells', () => {
@@ -23,7 +22,7 @@ describe('ground grid', () => {
 
 describe('brush and volume model', () => {
   const settings: BrushSettings = {
-    mode: 'deposit', radius: 2, strength: 2, falloff: 0.5, maxHeight: 10, relaxation: 0,
+    mode: 'deposit', radius: 2, strength: 2, falloff: 0.5, maxHeight: 10, reposeAngleDeg: 37, relaxation: 0,
   }
 
   it('adds coal, preserves the ground, and never excavates below zero', () => {
@@ -47,36 +46,36 @@ describe('brush and volume model', () => {
     applyBrushStroke(field, { x: 2, y: 2 }, { x: 2, y: 2 }, 10, { ...settings, maxHeight: 0.4 })
     expect(Math.max(...field.coal)).toBeLessThanOrEqual(0.4)
   })
-})
 
-describe('radar-style point cloud', () => {
-  it('samples only a non-empty coal surface and returns radar fields', () => {
-    const field = new HeightField({ rows: 4, cols: 4, cellSize: 1 })
-    field.coal.fill(1)
-    const config: RadarConfig = {
-      position: [-2, 1.5, 2], yawDeg: 0, pitchDeg: -10,
-      horizontalFovDeg: 160, verticalFovDeg: 120,
-      minRange: 0.1, maxRange: 20, sampleCount: 30,
-      rangeNoiseSigma: 0, dropoutRate: 0, outlierRate: 0,
+  it('spreads an unstable peak through diagonal neighbours while preserving coal volume', () => {
+    const field = new HeightField({ rows: 7, cols: 7, cellSize: 1 })
+    const baseline = new HeightField({ rows: 7, cols: 7, cellSize: 1 })
+    field.coal[field.index(3, 3)] = 8
+    baseline.coal[baseline.index(3, 3)] = 8
+    const stroke = {
+      ...settings, strength: 1, reposeAngleDeg: 35, relaxation: 1,
     }
-    let state = 12345
-    const random = () => {
-      state = (state * 16807) % 2147483647
-      return (state - 1) / 2147483646
-    }
-    const points = generateRadarPointCloud(field, config, random)
-    expect(points).toHaveLength(30)
-    expect(points.every((point) => point.range > 0 && Number.isFinite(point.azimuth))).toBe(true)
+    applyBrushStroke(baseline, { x: 3, y: 3 }, { x: 3, y: 3 }, 0.001, { ...stroke, relaxation: 0 })
+    applyBrushStroke(field, { x: 3, y: 3 }, { x: 3, y: 3 }, 0.001, stroke)
+    const after = calculateCoalStatistics(field, 1).volume
+    expect(after).toBeCloseTo(calculateCoalStatistics(baseline, 1).volume, 5)
+    expect(field.coal[field.index(2, 2)]).toBeGreaterThan(0)
+    expect(field.coal[field.index(3, 3)]).toBeLessThan(8)
   })
 
-  it('returns no points when there is no coal', () => {
-    const field = new HeightField({ rows: 3, cols: 3, cellSize: 1 })
-    const config: RadarConfig = {
-      position: [0, 0, 2], yawDeg: 0, pitchDeg: 0,
-      horizontalFovDeg: 180, verticalFovDeg: 120,
-      minRange: 0, maxRange: 10, sampleCount: 10,
-      rangeNoiseSigma: 0, dropoutRate: 0, outlierRate: 0,
+  it('uses the terrain surface, not only coal thickness, to determine a stable slope', () => {
+    const ground = new Float32Array(25)
+    ground[12] = 2
+    const field = new HeightField({ rows: 5, cols: 5, cellSize: 1, ground })
+    const baseline = new HeightField({ rows: 5, cols: 5, cellSize: 1, ground: ground.slice() })
+    field.coal[12] = 1
+    baseline.coal[12] = 1
+    const stroke = {
+      ...settings, strength: 1, reposeAngleDeg: 30, relaxation: 1,
     }
-    expect(generateRadarPointCloud(field, config)).toEqual([])
+    applyBrushStroke(baseline, { x: 2, y: 2 }, { x: 2, y: 2 }, 0.001, { ...stroke, relaxation: 0 })
+    applyBrushStroke(field, { x: 2, y: 2 }, { x: 2, y: 2 }, 0.001, stroke)
+    expect(field.coal[12]).toBeLessThan(1)
+    expect(calculateCoalStatistics(field, 1).volume).toBeCloseTo(calculateCoalStatistics(baseline, 1).volume, 5)
   })
 })

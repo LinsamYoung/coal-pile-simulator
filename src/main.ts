@@ -1,11 +1,11 @@
 import './style.css'
-import type { BrushSettings, PointCloudData, RadarConfig, RadarPoint, ToolMode } from './types'
+import type { BrushSettings, GridReplacementResult, PointCloudData, ToolMode } from './types'
 import { loadPlyFromUrl, parsePly } from './io/PlyImporter'
-import { appendPointsToSourcePly, radarPointsToCsv, downloadBlob } from './io/PointCloudExporter'
+import { downloadBlob, replaceCoveredPointsInSourcePly } from './io/PointCloudExporter'
 import { buildGroundGrid } from './simulation/GroundGridBuilder'
 import { applyBrushStroke } from './simulation/BrushEngine'
 import { calculateCoalStatistics } from './simulation/VolumeCalculator'
-import { generateRadarPointCloud } from './simulation/RadarStylePointCloud'
+import { buildGridAlignedReplacements } from './simulation/GridAlignedPointCloud'
 import { HeightField } from './simulation/HeightField'
 import { SceneController } from './scene/SceneController'
 
@@ -25,7 +25,7 @@ app.innerHTML = `
     <aside class="sidebar">
       <div class="sidebar-tabs" role="tablist">
         <button class="tab is-active" data-tab="edit" type="button">堆场编辑</button>
-        <button class="tab" data-tab="radar" type="button">雷达仿真</button>
+        <button class="tab" data-tab="export" type="button">点云生成</button>
       </div>
 
       <div class="panel-scroll">
@@ -54,7 +54,8 @@ app.innerHTML = `
               <label class="range-control"><span>笔刷半径 <output id="radius-output">3.0 m</output></span><input id="radius" type="range" min="0.8" max="12" step="0.1" value="3"></label>
               <label class="range-control"><span>作业强度 <output id="strength-output">2.0 m/s</output></span><input id="strength" type="range" min="0.2" max="8" step="0.1" value="2"></label>
               <label class="range-control"><span>边缘柔和 <output id="falloff-output">65%</output></span><input id="falloff" type="range" min="0" max="1" step="0.01" value="0.65"></label>
-              <label class="range-control"><span>自然坡面 <output id="relaxation-output">35%</output></span><input id="relaxation" type="range" min="0" max="1" step="0.01" value="0.35"></label>
+              <label class="range-control"><span>安息角 <output id="repose-angle-output">37°</output></span><input id="repose-angle" type="range" min="25" max="45" step="1" value="37"></label>
+              <label class="range-control"><span>塌落强度 <output id="relaxation-output">35%</output></span><input id="relaxation" type="range" min="0" max="1" step="0.01" value="0.35"></label>
             </div>
             <div class="inline-fields">
               <label><span>最大堆高</span><div><input id="max-height" type="number" min="0.5" max="80" step="0.5" value="18"><em>m</em></div></label>
@@ -64,42 +65,34 @@ app.innerHTML = `
           </div>
         </section>
 
-        <section class="tab-panel" data-panel="radar">
+        <section class="tab-panel" data-panel="export">
           <div class="section">
-            <div class="section-heading"><span>01</span><div><h2>虚拟雷达</h2><p>局部坐标 · 米</p></div></div>
-            <div class="coordinate-grid">
-              <label><span>X</span><input id="radar-x" type="number" step="0.5" value="0"></label>
-              <label><span>Y</span><input id="radar-y" type="number" step="0.5" value="0"></label>
-              <label><span>Z</span><input id="radar-z" type="number" step="0.5" value="8"></label>
+            <div class="section-heading"><span>01</span><div><h2>源网格继承</h2><p>模式 B+ · 替换与接触补点</p></div></div>
+            <div class="mode-card">
+              <b>原点不动，空隙按源网格补齐</b>
+              <p>原 PLY 顶点顺序和 XY 坐标保持不变；煤堆主体与坡脚缺点处按源扫描方向、间距和相位补点。</p>
             </div>
-            <div class="inline-fields">
-              <label><span>水平朝向</span><div><input id="radar-yaw" type="number" min="-180" max="180" step="1" value="0"><em>°</em></div></label>
-              <label><span>俯仰角</span><div><input id="radar-pitch" type="number" min="-89" max="89" step="1" value="-12"><em>°</em></div></label>
+            <div class="source-grid-stats">
+              <div><span>源文件点数</span><b id="source-point-count">—</b></div>
+              <div><span>输出点数</span><b id="output-point-count">—</b></div>
             </div>
+            <div class="grid-analysis" id="grid-analysis">扫描网格将在生成时自动分析</div>
           </div>
 
           <div class="section">
-            <div class="section-heading"><span>02</span><div><h2>扫描参数</h2><p>视场、量程与测量噪声</p></div></div>
-            <div class="inline-fields">
-              <label><span>水平视场</span><div><input id="radar-hfov" type="number" min="1" max="180" value="100"><em>°</em></div></label>
-              <label><span>垂直视场</span><div><input id="radar-vfov" type="number" min="1" max="120" value="60"><em>°</em></div></label>
-              <label><span>最近量程</span><div><input id="radar-min-range" type="number" min="0" step="0.5" value="1"><em>m</em></div></label>
-              <label><span>最远量程</span><div><input id="radar-max-range" type="number" min="1" step="1" value="120"><em>m</em></div></label>
-            </div>
-            <label class="range-control"><span>采样点数 <output id="sample-count-output">10,000</output></span><input id="sample-count" type="range" min="500" max="30000" step="500" value="10000"></label>
-            <label class="range-control"><span>距离噪声 σ <output id="noise-output">0.030 m</output></span><input id="noise" type="range" min="0" max="0.3" step="0.005" value="0.03"></label>
-            <label class="range-control"><span>随机漏检 <output id="dropout-output">8%</output></span><input id="dropout" type="range" min="0" max="0.8" step="0.01" value="0.08"></label>
-            <label class="range-control"><span>离群点比例 <output id="outlier-output">1%</output></span><input id="outlier" type="range" min="0" max="0.2" step="0.005" value="0.01"></label>
+            <div class="section-heading"><span>02</span><div><h2>地面识别</h2><p>避免替换设备与墙体点</p></div></div>
+            <label class="range-control"><span>地面容差 <output id="ground-tolerance-output">0.35 m</output></span><input id="ground-tolerance" type="range" min="0.05" max="1.5" step="0.05" value="0.35"></label>
+            <label class="range-control"><span>坡脚过渡宽度 <output id="transition-cells-output">3 格</output></span><input id="transition-cells" type="range" min="1" max="8" step="1" value="3"></label>
+            <label class="check-control"><input id="preserve-z-residual" type="checkbox" checked><span><b>沿用源高程残差</b><small>将原地面点的微小 Z 波动平移到煤堆表面，不改变 XY 网格。</small></span></label>
+            <p class="method-note"><i>i</i> 高于局部地面容差的设备、围墙和其他静态点保持原样。</p>
           </div>
 
           <div class="section export-section">
-            <button class="primary-button" id="generate-radar" type="button"><span>⌁</span> 生成并预览点云</button>
-            <div class="radar-result" id="radar-result"><span>扫描结果</span><b>尚未生成</b></div>
-            <div class="export-buttons">
-              <button id="export-ply" type="button">导出合并 PLY</button>
-              <button id="export-csv" type="button">导出 CSV</button>
-            </div>
-            <p class="method-note"><i>i</i> PLY 会保留原文件格式与顶点属性并追加煤堆点；CSV 为雷达测量明细。</p>
+            <button class="primary-button" id="generate-grid" type="button"><span>⌁</span> 生成并预览覆盖点</button>
+            <div class="generation-result" id="grid-result"><span>覆盖区点云</span><b>尚未生成</b></div>
+            <div class="generation-breakdown" id="generation-breakdown"><span>原位替换 —</span><span>空隙补点 —</span></div>
+            <button class="export-full-button" id="export-ply" type="button">导出模式 B+ PLY</button>
+            <p class="method-note"><i>i</i> 原点只改 Z；输出点数等于源点数加接触区实际补点数。</p>
           </div>
         </section>
       </div>
@@ -131,8 +124,11 @@ app.innerHTML = `
 const scene = new SceneController(element('viewport'))
 let field: HeightField | null = null
 let sourcePointCloud: PointCloudData | null = null
-let radarPoints: RadarPoint[] = []
+let gridResult: GridReplacementResult | null = null
 let density = 0.85
+let groundTolerance = 0.35
+let preserveSourceZResidual = true
+let transitionCells = 3
 let painting = false
 let hoverPoint: { x: number; y: number; z: number } | null = null
 let lastPaintPoint: { x: number; y: number } | null = null
@@ -140,20 +136,13 @@ let lastPaintTime = 0
 let statsUpdateTime = 0
 
 const brush: BrushSettings = {
-  mode: 'deposit', radius: 3, strength: 2, falloff: 0.65, maxHeight: 18, relaxation: 0.35,
-}
-
-const radar: RadarConfig = {
-  position: [0, 0, 8], yawDeg: 0, pitchDeg: -12,
-  horizontalFovDeg: 100, verticalFovDeg: 60,
-  minRange: 1, maxRange: 120, sampleCount: 10_000,
-  rangeNoiseSigma: 0.03, dropoutRate: 0.08, outlierRate: 0.01,
+  mode: 'deposit', radius: 3, strength: 2, falloff: 0.65, maxHeight: 18, reposeAngleDeg: 37, relaxation: 0.35,
 }
 
 setupTabs()
 setupBrushControls()
 setupFileImport()
-setupRadarControls()
+setupGridExportControls()
 setupPointerEditing()
 setupClearDialog()
 requestAnimationFrame(paintLoop)
@@ -169,10 +158,10 @@ function setupTabs(): void {
       document.querySelectorAll('[data-tab], [data-panel]').forEach((node) => node.classList.remove('is-active'))
       button.classList.add('is-active')
       document.querySelector(`[data-panel="${button.dataset.tab}"]`)?.classList.add('is-active')
-      scene.setRadarVisible(button.dataset.tab === 'radar')
+      scene.setGeneratedVisible(button.dataset.tab === 'export')
     })
   })
-  scene.setRadarVisible(false)
+  scene.setGeneratedVisible(false)
 }
 
 function setupBrushControls(): void {
@@ -187,6 +176,7 @@ function setupBrushControls(): void {
   bindRange('radius', (value) => { brush.radius = value; updateToolHud() }, (value) => `${value.toFixed(1)} m`)
   bindRange('strength', (value) => { brush.strength = value }, (value) => `${value.toFixed(1)} m/s`)
   bindRange('falloff', (value) => { brush.falloff = value }, percent)
+  bindRange('repose-angle', (value) => { brush.reposeAngleDeg = value }, (value) => `${Math.round(value)}°`)
   bindRange('relaxation', (value) => { brush.relaxation = value }, percent)
   element<HTMLInputElement>('max-height').addEventListener('change', (event) => {
     brush.maxHeight = Math.max(0.1, Number((event.target as HTMLInputElement).value))
@@ -219,23 +209,21 @@ function setupFileImport(): void {
   element('reload-sample').addEventListener('click', () => void loadBundledSample())
 }
 
-function setupRadarControls(): void {
-  bindNumeric('radar-x', (value) => { radar.position[0] = value })
-  bindNumeric('radar-y', (value) => { radar.position[1] = value })
-  bindNumeric('radar-z', (value) => { radar.position[2] = value })
-  bindNumeric('radar-yaw', (value) => { radar.yawDeg = value })
-  bindNumeric('radar-pitch', (value) => { radar.pitchDeg = value })
-  bindNumeric('radar-hfov', (value) => { radar.horizontalFovDeg = value })
-  bindNumeric('radar-vfov', (value) => { radar.verticalFovDeg = value })
-  bindNumeric('radar-min-range', (value) => { radar.minRange = value })
-  bindNumeric('radar-max-range', (value) => { radar.maxRange = value })
-  bindRange('sample-count', (value) => { radar.sampleCount = Math.round(value) }, (value) => Math.round(value).toLocaleString())
-  bindRange('noise', (value) => { radar.rangeNoiseSigma = value }, (value) => `${value.toFixed(3)} m`)
-  bindRange('dropout', (value) => { radar.dropoutRate = value }, percent)
-  bindRange('outlier', (value) => { radar.outlierRate = value }, percent)
-  element('generate-radar').addEventListener('click', generateRadar)
-  element('export-ply').addEventListener('click', () => exportRadar('ply'))
-  element('export-csv').addEventListener('click', () => exportRadar('csv'))
+function setupGridExportControls(): void {
+  bindRange('ground-tolerance', (value) => {
+    groundTolerance = value
+    invalidateGridResult()
+  }, (value) => `${value.toFixed(2)} m`)
+  element<HTMLInputElement>('preserve-z-residual').addEventListener('change', (event) => {
+    preserveSourceZResidual = (event.target as HTMLInputElement).checked
+    invalidateGridResult()
+  })
+  bindRange('transition-cells', (value) => {
+    transitionCells = Math.round(value)
+    invalidateGridResult()
+  }, (value) => `${Math.round(value)} 格`)
+  element('generate-grid').addEventListener('click', generateGridPointCloud)
+  element('export-ply').addEventListener('click', exportGridPointCloud)
 }
 
 function setupPointerEditing(): void {
@@ -292,11 +280,11 @@ function setupClearDialog(): void {
   dialog.addEventListener('close', () => {
     if (dialog.returnValue !== 'confirm' || !field) return
     field.clearCoal()
-    radarPoints = []
+    gridResult = null
     scene.updateCoalMesh()
-    scene.setRadarVisualization(radar, [])
+    scene.setGridPreview([])
     updateStatistics()
-    updateRadarResult()
+    updateGridResult()
     showToast('动态煤堆已清空，场地点云保持不变')
   })
 }
@@ -331,22 +319,20 @@ async function acceptPointCloud(data: PointCloudData): Promise<void> {
   const result = buildGroundGrid(data.positions, 0.5)
   field = result.field
   sourcePointCloud = data
-  radarPoints = []
+  gridResult = null
   scene.setPointCloud(data)
   scene.setHeightField(field)
   scene.fitToField(field)
   const width = (field.cols - 1) * field.cellSize
   const height = (field.rows - 1) * field.cellSize
-  radar.position = [Math.max(0, field.originX - 4), field.originY + height / 2, Math.max(6, width * 0.08)]
-  radar.yawDeg = 0
-  radar.maxRange = Math.ceil(Math.hypot(width, height) * 1.25)
-  syncRadarFields()
-  scene.setRadarVisualization(radar, [])
+  scene.setGridPreview([])
   element('file-name').textContent = data.sourceName
   element('file-meta').textContent = `${data.pointCount.toLocaleString()} 点 · ${width.toFixed(1)} × ${height.toFixed(1)} m · 网格 ${field.cols} × ${field.rows}`
   element('scene-status').textContent = `场景就绪 · ${result.effectiveCellSize.toFixed(2)} m 网格`
+  element('source-point-count').textContent = data.pointCount.toLocaleString()
+  element('output-point-count').textContent = data.pointCount.toLocaleString()
   updateStatistics()
-  updateRadarResult()
+  updateGridResult()
   showToast(`已载入 ${data.pointCount.toLocaleString()} 个场地点`)
 }
 
@@ -358,7 +344,7 @@ function paintLoop(time: number): void {
   applyBrushStroke(field, lastPaintPoint, current, deltaSeconds, brush)
   lastPaintPoint = current
   lastPaintTime = time
-  radarPoints = []
+  invalidateGridResult()
   scene.updateCoalMesh()
   if (time - statsUpdateTime > 100) {
     updateStatistics()
@@ -366,37 +352,38 @@ function paintLoop(time: number): void {
   }
 }
 
-function generateRadar(): void {
-  if (!field) return showToast('请先载入场地点云', true)
+function generateGridPointCloud(): void {
+  if (!field || !sourcePointCloud) return showToast('请先载入场地点云', true)
   const stats = calculateCoalStatistics(field, density)
   if (stats.activeCells === 0) return showToast('请先使用倒煤工具创建煤堆', true)
-  const button = element<HTMLButtonElement>('generate-radar')
+  const button = element<HTMLButtonElement>('generate-grid')
   button.disabled = true
-  button.innerHTML = '<span class="mini-spinner"></span> 正在扫描…'
+  button.innerHTML = '<span class="mini-spinner"></span> 正在匹配源网格…'
   setTimeout(() => {
-    radarPoints = generateRadarPointCloud(field!, radar)
-    scene.setRadarVisualization(radar, radarPoints)
-    scene.setRadarVisible(true)
-    updateRadarResult()
+    gridResult = buildGridAlignedReplacements(sourcePointCloud!, field!, {
+      groundTolerance,
+      preserveSourceZResidual,
+      transitionCells,
+    })
+    scene.setGridPreview([...gridResult.replacements, ...gridResult.additions])
+    scene.setGeneratedVisible(true)
+    updateGridResult()
+    element('output-point-count').textContent = gridResult.outputPointCount.toLocaleString()
+    element('grid-analysis').textContent = `扫描方向 ${gridResult.scanGrid.angleDeg.toFixed(1)}° · 点距 ${gridResult.scanGrid.alongSpacing.toFixed(3)} m · 行距 ${gridResult.scanGrid.crossSpacing.toFixed(3)} m`
     button.disabled = false
-    button.innerHTML = '<span>⌁</span> 重新生成点云'
-    if (radarPoints.length === 0) showToast('当前视场未扫描到煤堆，请调整位置或朝向', true)
-    else showToast(`雷达点云已生成：${radarPoints.length.toLocaleString()} 点`)
+    button.innerHTML = '<span>⌁</span> 重新生成覆盖点'
+    if (gridResult.replacements.length + gridResult.additions.length === 0) showToast('没有找到煤堆覆盖范围，请调整地面容差', true)
+    else showToast(`已生成覆盖点：替换 ${gridResult.replacements.length.toLocaleString()}，补点 ${gridResult.additions.length.toLocaleString()}`)
   }, 30)
 }
 
-function exportRadar(format: 'ply' | 'csv'): void {
-  if (radarPoints.length === 0) return showToast('请先生成雷达点云', true)
+function exportGridPointCloud(): void {
+  if (!gridResult || gridResult.replacements.length + gridResult.additions.length === 0) return showToast('请先生成覆盖点云', true)
+  if (!sourcePointCloud) return showToast('原始 PLY 数据不可用', true)
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
-  if (format === 'ply') {
-    if (!sourcePointCloud) return showToast('原始 PLY 数据不可用', true)
-    const blob = appendPointsToSourcePly(sourcePointCloud, radarPoints)
-    downloadBlob(blob, `coalfield_merged_${timestamp}.ply`)
-    showToast(`已导出合并 PLY：${(sourcePointCloud.pointCount + radarPoints.length).toLocaleString()} 点`)
-    return
-  }
-  downloadBlob(radarPointsToCsv(radarPoints), `radar_coal_${timestamp}.csv`)
-  showToast('已导出雷达测量 CSV')
+  const blob = replaceCoveredPointsInSourcePly(sourcePointCloud, gridResult.replacements, gridResult.additions)
+  downloadBlob(blob, `coalfield_replaced_${timestamp}.ply`)
+  showToast(`已导出模式 B+ PLY：${gridResult.outputPointCount.toLocaleString()} 点`)
 }
 
 function updateStatistics(): void {
@@ -407,11 +394,23 @@ function updateStatistics(): void {
   element('stat-height').textContent = stats.maxHeight.toFixed(2)
 }
 
-function updateRadarResult(): void {
-  const result = element('radar-result')
-  result.innerHTML = radarPoints.length
-    ? `<span>扫描结果</span><b>${radarPoints.length.toLocaleString()} 点</b>`
-    : '<span>扫描结果</span><b>尚未生成</b>'
+function updateGridResult(): void {
+  const result = element('grid-result')
+  result.innerHTML = gridResult
+    ? `<span>覆盖区点云</span><b>${(gridResult.coveredSourcePoints + gridResult.filledGapPoints).toLocaleString()} 点</b>`
+    : '<span>覆盖区点云</span><b>尚未生成</b>'
+  element('generation-breakdown').innerHTML = gridResult
+    ? `<span>原位替换 ${gridResult.coveredSourcePoints.toLocaleString()}</span><span>空隙补点 ${gridResult.filledGapPoints.toLocaleString()}</span>`
+    : '<span>原位替换 —</span><span>空隙补点 —</span>'
+}
+
+function invalidateGridResult(): void {
+  if (!gridResult) return
+  gridResult = null
+  scene.setGridPreview([])
+  if (sourcePointCloud) element('output-point-count').textContent = sourcePointCloud.pointCount.toLocaleString()
+  element('grid-analysis').textContent = '扫描网格将在生成时自动分析'
+  updateGridResult()
 }
 
 function updateToolHud(): void {
@@ -438,23 +437,10 @@ function bindRange(id: string, apply: (value: number) => void, format: (value: n
   update()
 }
 
-function bindNumeric(id: string, apply: (value: number) => void): void {
-  element<HTMLInputElement>(id).addEventListener('input', (event) => apply(Number((event.target as HTMLInputElement).value)))
-}
-
 function syncRange(id: string, value: number): void {
   const input = element<HTMLInputElement>(id)
   input.value = String(value)
   input.dispatchEvent(new Event('input'))
-}
-
-function syncRadarFields(): void {
-  const values: Record<string, number> = {
-    'radar-x': radar.position[0], 'radar-y': radar.position[1], 'radar-z': radar.position[2],
-    'radar-yaw': radar.yawDeg, 'radar-pitch': radar.pitchDeg,
-    'radar-max-range': radar.maxRange,
-  }
-  for (const [id, value] of Object.entries(values)) element<HTMLInputElement>(id).value = value.toFixed(value % 1 === 0 ? 0 : 1)
 }
 
 function setLoading(loading: boolean, title = ''): void {

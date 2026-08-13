@@ -17,31 +17,9 @@ export interface BrushSettings {
   strength: number
   falloff: number
   maxHeight: number
+  /** Bulk angle at which deposited coal begins to slide, measured from horizontal. */
+  reposeAngleDeg: number
   relaxation: number
-}
-
-export interface RadarConfig {
-  position: [number, number, number]
-  yawDeg: number
-  pitchDeg: number
-  horizontalFovDeg: number
-  verticalFovDeg: number
-  minRange: number
-  maxRange: number
-  sampleCount: number
-  rangeNoiseSigma: number
-  dropoutRate: number
-  outlierRate: number
-}
-
-export interface RadarPoint {
-  x: number
-  y: number
-  z: number
-  range: number
-  azimuth: number
-  elevation: number
-  intensity: number
 }
 
 export interface CoalStatistics {
@@ -49,4 +27,48 @@ export interface CoalStatistics {
   mass: number
   maxHeight: number
   activeCells: number
+}
+
+export interface GridPointReplacement {
+  /** Zero-based vertex index in the source PLY. */
+  index: number
+  /** Local coordinates; X/Y remain exactly equal to the source point. */
+  x: number
+  y: number
+  z: number
+  intensity?: number
+}
+
+export interface GridPointAddition {
+  /** Local grid-aligned coordinates. */
+  x: number
+  y: number
+  z: number
+  /** Source vertex whose non-position PLY attributes should be copied. */
+  templateIndex: number
+  scanLineIndex: number
+  pointIndexInLine: number
+}
+
+export interface SourceScanGrid {
+  alongAxis: [number, number]
+  crossAxis: [number, number]
+  alongSpacing: number
+  crossSpacing: number
+  originAlong: number
+  originCross: number
+  angleDeg: number
+  confidence: number
+}
+
+export interface GridReplacementResult {
+  replacements: GridPointReplacement[]
+  additions: GridPointAddition[]
+  scanGrid: SourceScanGrid
+  coveredSourcePoints: number
+  preservedSourcePoints: number
+  filledGapPoints: number
+  targetGridPoints: number
+  outputPointCount: number
+  coveragePercent: number
 }

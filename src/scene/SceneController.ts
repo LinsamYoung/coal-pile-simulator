@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
-import type { PointCloudData, RadarConfig, RadarPoint, ToolMode } from '../types'
+import type { GridPointAddition, GridPointReplacement, PointCloudData, ToolMode } from '../types'
 import { createPointCloudGeometry } from '../io/PlyImporter'
 import { HeightField } from '../simulation/HeightField'
 
@@ -17,8 +17,8 @@ export class SceneController {
   private coalMesh: THREE.Mesh | null = null
   private coalMaterial: THREE.ShaderMaterial | null = null
   private brushOverlay: THREE.Group
-  private radarGroup = new THREE.Group()
-  private radarPoints: THREE.Points | null = null
+  private generatedGroup = new THREE.Group()
+  private generatedPoints: THREE.Points | null = null
   private field: HeightField | null = null
   private animationFrame = 0
 
@@ -61,7 +61,7 @@ export class SceneController {
 
     this.brushOverlay = this.createBrushOverlay()
     this.scene.add(this.brushOverlay)
-    this.scene.add(this.radarGroup)
+    this.scene.add(this.generatedGroup)
 
     this.resizeObserver = new ResizeObserver(() => this.resize())
     this.resizeObserver.observe(container)
@@ -158,56 +158,35 @@ export class SceneController {
     }
   }
 
-  setRadarVisualization(config: RadarConfig, points: RadarPoint[]): void {
-    this.radarGroup.clear()
-    this.radarPoints?.geometry.dispose()
-    if (this.radarPoints) (this.radarPoints.material as THREE.Material).dispose()
-
-    const marker = new THREE.Group()
-    marker.position.set(...config.position)
-    const body = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.16, 0.22, 0.42, 12),
-      new THREE.MeshStandardMaterial({ color: '#73e3f3', metalness: 0.7, roughness: 0.25 }),
-    )
-    body.rotation.x = Math.PI / 2
-    marker.add(body)
-    const pulse = new THREE.Mesh(
-      new THREE.SphereGeometry(0.34, 16, 12),
-      new THREE.MeshBasicMaterial({ color: '#73e3f3', transparent: true, opacity: 0.13 }),
-    )
-    marker.add(pulse)
-    this.radarGroup.add(marker)
-    this.radarGroup.add(createRadarFrustum(config))
-
-    if (points.length > 0) {
-      const positions = new Float32Array(points.length * 3)
-      const colors = new Float32Array(points.length * 3)
-      const low = new THREE.Color('#47d8ea')
-      const high = new THREE.Color('#f4f76f')
-      const mixed = new THREE.Color()
-      points.forEach((point, index) => {
-        positions.set([point.x, point.y, point.z], index * 3)
-        mixed.copy(low).lerp(high, point.intensity / 255)
-        colors.set([mixed.r, mixed.g, mixed.b], index * 3)
-      })
-      const geometry = new THREE.BufferGeometry()
-      geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
-      geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
-      this.radarPoints = new THREE.Points(geometry, new THREE.PointsMaterial({
-        size: 0.13,
-        sizeAttenuation: true,
-        vertexColors: true,
-        transparent: true,
-        opacity: 0.9,
-      }))
-      this.radarGroup.add(this.radarPoints)
-    } else {
-      this.radarPoints = null
+  setGridPreview(points: readonly (GridPointReplacement | GridPointAddition)[]): void {
+    this.generatedGroup.clear()
+    this.generatedPoints?.geometry.dispose()
+    if (this.generatedPoints) (this.generatedPoints.material as THREE.Material).dispose()
+    if (points.length === 0) {
+      this.generatedPoints = null
+      return
     }
+    const positions = new Float32Array(points.length * 3)
+    for (let index = 0; index < points.length; index += 1) {
+      const point = points[index]
+      positions.set([point.x, point.y, point.z + 0.02], index * 3)
+    }
+    const geometry = new THREE.BufferGeometry()
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+    this.generatedPoints = new THREE.Points(geometry, new THREE.PointsMaterial({
+      color: '#70e2ec',
+      size: 0.1,
+      sizeAttenuation: true,
+      transparent: true,
+      opacity: 0.92,
+      depthWrite: false,
+    }))
+    this.generatedPoints.renderOrder = 4
+    this.generatedGroup.add(this.generatedPoints)
   }
 
-  setRadarVisible(visible: boolean): void {
-    this.radarGroup.visible = visible
+  setGeneratedVisible(visible: boolean): void {
+    this.generatedGroup.visible = visible
   }
 
   dispose(): void {
@@ -271,7 +250,9 @@ function createHeightFieldGeometry(field: HeightField): THREE.BufferGeometry {
       const b = field.index(row, col + 1)
       const c = field.index(row + 1, col)
       const d = field.index(row + 1, col + 1)
-      indices.set([a, b, d, a, d, c], cursor)
+      // Alternating the diagonal avoids a visible, field-wide triangulation grain.
+      if ((row + col) % 2 === 0) indices.set([a, b, d, a, d, c], cursor)
+      else indices.set([a, b, c, b, d, c], cursor)
       cursor += 6
     }
   }
@@ -300,46 +281,29 @@ function createCoalMaterial(): THREE.ShaderMaterial {
     fragmentShader: `
       varying float vCoal;
       varying vec3 vWorldPosition;
+      float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123); }
+      float noise(vec2 p) {
+        vec2 i = floor(p); vec2 f = fract(p); f = f * f * (3.0 - 2.0 * f);
+        return mix(mix(hash(i), hash(i + vec2(1., 0.)), f.x), mix(hash(i + vec2(0., 1.)), hash(i + vec2(1., 1.)), f.x), f.y);
+      }
+      float fbm(vec2 p) { return noise(p) * .57 + noise(p * 2.07) * .29 + noise(p * 5.11) * .14; }
       void main() {
         if (vCoal < 0.002) discard;
         vec3 normal = normalize(cross(dFdx(vWorldPosition), dFdy(vWorldPosition)));
         if (!gl_FrontFacing) normal = -normal;
+        vec2 coalUv = vWorldPosition.xy;
+        float coarse = fbm(coalUv * 0.16);
+        float grain = noise(coalUv * 2.8);
+        normal = normalize(normal + vec3(dFdx(grain), dFdy(grain), 0.0) * 0.08);
         vec3 lightDir = normalize(vec3(-0.35, -0.42, 0.84));
         float diffuse = max(dot(normal, lightDir), 0.0);
-        float rim = pow(1.0 - max(dot(normal, normalize(cameraPosition - vWorldPosition)), 0.0), 2.0);
-        float heightMix = clamp(vCoal / 8.0, 0.0, 1.0);
-        vec3 lowColor = vec3(0.105, 0.094, 0.076);
-        vec3 highColor = vec3(0.24, 0.205, 0.145);
-        vec3 color = mix(lowColor, highColor, heightMix) * (0.48 + diffuse * 0.72);
-        color += rim * vec3(0.12, 0.105, 0.075);
+        float slope = 1.0 - clamp(normal.z, 0.0, 1.0);
+        vec3 compacted = vec3(0.075, 0.071, 0.062);
+        vec3 dry = vec3(0.145, 0.132, 0.103);
+        vec3 color = mix(compacted, dry, coarse * 0.62 + grain * 0.12);
+        color *= 0.42 + diffuse * 0.62 - slope * 0.08;
         gl_FragColor = vec4(color, 1.0);
       }
     `,
   })
-}
-
-function createRadarFrustum(config: RadarConfig): THREE.LineSegments {
-  const position = new THREE.Vector3(...config.position)
-  const corners: THREE.Vector3[] = []
-  for (const elevation of [-config.verticalFovDeg / 2, config.verticalFovDeg / 2]) {
-    for (const azimuth of [-config.horizontalFovDeg / 2, config.horizontalFovDeg / 2]) {
-      const yaw = (config.yawDeg + azimuth) * Math.PI / 180
-      const pitch = (config.pitchDeg + elevation) * Math.PI / 180
-      corners.push(new THREE.Vector3(
-        position.x + config.maxRange * Math.cos(pitch) * Math.cos(yaw),
-        position.y + config.maxRange * Math.cos(pitch) * Math.sin(yaw),
-        position.z + config.maxRange * Math.sin(pitch),
-      ))
-    }
-  }
-  const segments: number[] = []
-  const add = (a: THREE.Vector3, b: THREE.Vector3) => segments.push(a.x, a.y, a.z, b.x, b.y, b.z)
-  corners.forEach((corner) => add(position, corner))
-  add(corners[0], corners[1])
-  add(corners[1], corners[3])
-  add(corners[3], corners[2])
-  add(corners[2], corners[0])
-  const geometry = new THREE.BufferGeometry()
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute(segments, 3))
-  return new THREE.LineSegments(geometry, new THREE.LineBasicMaterial({ color: '#62dbe9', transparent: true, opacity: 0.22 }))
 }
