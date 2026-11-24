@@ -18,7 +18,10 @@ app.innerHTML = `
         <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
         <div><b>CoalForm</b><span>三维煤场仿真台</span></div>
       </div>
-      <div class="scene-status"><span class="status-dot"></span><span id="scene-status">正在准备场景</span></div>
+      <div class="workspace-header">
+        <a class="workspace-link" href="./circular-yard.html">圆形料场 <span aria-hidden="true">↗</span></a>
+        <div class="scene-status"><span class="status-dot"></span><span id="scene-status">正在准备场景</span></div>
+      </div>
       <div class="topbar-help"><kbd>中键</kbd> 平移 <kbd>右键</kbd> 旋转 <kbd>滚轮</kbd> 缩放</div>
     </header>
 

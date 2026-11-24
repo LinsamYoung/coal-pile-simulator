@@ -111,7 +111,7 @@ function distributeOverflow(field: HeightField, overflow: Overflow, maxHeight: n
       }
     }
     for (const { index: next } of neighbours(field, row, col)) {
-      if (!visited[next]) {
+      if (field.enabled[next] && !visited[next]) {
         visited[next] = 1
         queue.push(next)
       }

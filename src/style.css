@@ -47,6 +47,12 @@ button { color: inherit; }
 .brand span span, .brand > div span { margin-top: 4px; color: var(--muted); font-size: 10px; letter-spacing: .16em; }
 
 .scene-status { display: flex; align-items: center; gap: 9px; padding-left: 22px; color: #b9c0ba; font-size: 12px; }
+.workspace-header { display: flex; align-items: center; gap: 6px; min-width: 0; padding-left: 18px; }
+.workspace-header .scene-status { min-width: 0; padding-left: 10px; }
+.workspace-header .scene-status > :last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-link { display: inline-flex; align-items: center; gap: 6px; padding: 7px 10px; border: 1px solid #39443a; border-radius: 5px; color: #e1ead7; background: #212922; font-size: 11px; text-decoration: none; white-space: nowrap; }
+.workspace-link:hover, .workspace-link:focus-visible { border-color: var(--accent); color: var(--accent); }
+.workspace-link span { color: var(--accent); }
 .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 4px rgba(214,238,79,.1), 0 0 12px rgba(214,238,79,.35); }
 .topbar-help { display: flex; align-items: center; gap: 6px; padding-right: 22px; color: #6f7a71; font-size: 11px; }
 kbd { padding: 3px 6px; margin-left: 7px; border: 1px solid #374039; border-bottom-color: #4b564d; border-radius: 4px; background: #1c231e; color: #aab3ac; font-size: 10px; box-shadow: 0 1px 0 #080a09; }
@@ -190,12 +196,28 @@ dialog .confirm-clear { border-color: transparent; background: #db7952; color: #
 .toast.is-visible { opacity: 1; transform: translate(-50%, 0); }
 .toast.is-error { border-color: rgba(245,138,92,.38); color: #f0aa8b; }
 
+.yard-sidebar { overflow: auto; scrollbar-width: thin; scrollbar-color: #3a433c transparent; }
+.yard-dimensions { display: grid; gap: 1px; margin: 0 0 18px; overflow: hidden; border: 1px solid #303a32; border-radius: 7px; background: #303a32; }
+.yard-dimensions div { display: flex; justify-content: space-between; gap: 6px; padding: 11px 12px; background: #131915; }
+.yard-dimensions dt { color: #a0aba2; font-size: 11px; }
+.yard-dimensions dd { margin: 0; color: #e6ece6; font: 500 11px 'DM Mono', monospace; }
+.yard-sidebar .export-full-button:disabled { opacity: .45; cursor: default; }
+.yard-sidebar .export-full-button:disabled:hover { border-color: #3c473e; color: #d3dbd5; }
+.yard-view-controls { position: absolute; z-index: 2; left: 18px; top: 18px; display: flex; gap: 4px; padding: 4px; border: 1px solid var(--line); border-radius: 7px; background: #171e19e8; }
+.yard-view-controls button { padding: 6px 9px; border: 1px solid transparent; border-radius: 4px; background: transparent; color: #b4bfb7; font-size: 11px; cursor: pointer; }
+.yard-view-controls button:hover { color: #fff; }
+.yard-view-controls button[aria-pressed='true'] { border-color: #444f36; background: #2a3322; color: #e2eea4; }
+.circular-yard .stats-panel { top: 18px; }
+
 @media (max-width: 900px) {
   .app-shell { grid-template-columns: 300px 1fr; }
   .topbar { grid-template-columns: 300px 1fr; }
   .topbar-help { display: none; }
   .stats-panel { flex-direction: column; }
   .stats-panel > div { min-width: 104px; border-right: 0; border-bottom: 1px solid rgba(225,235,226,.08); }
+  .circular-yard .stats-panel { top: 58px; flex-direction: row; }
+  .circular-yard .stats-panel > div { min-width: 80px; padding: 8px 10px; border-bottom: 0; border-right: 1px solid var(--line); }
+  .circular-yard .stats-panel > div:last-child { border: 0; }
 }
 
 @media (max-width: 660px) {
@@ -204,10 +226,50 @@ dialog .confirm-clear { border-color: transparent; background: #db7952; color: #
   .brand { border-right: 0; }
   .scene-status { padding-right: 14px; font-size: 0; }
   .scene-status .status-dot { display: block; }
+  .workspace-header { padding: 0 12px 0 0; }
+  .workspace-header .scene-status { display: none; }
   .sidebar { grid-row: 3; border-right: 0; border-top: 1px solid var(--line); }
   .viewport { grid-row: 2; }
   .stats-panel { top: 12px; right: 12px; flex-direction: row; }
   .stats-panel > div { min-width: 80px; padding: 8px; border-bottom: 0; border-right: 1px solid var(--line); }
   .stats-panel span { margin-bottom: 3px; }.stats-panel b { font-size: 12px; }
   .viewport-badge, .axis-widget, .compass { display: none; }
+  .yard-view-controls { top: auto; bottom: 9px; left: 9px; }
+  .circular-yard .stats-panel { top: 9px; right: 9px; }
 }
+.circular-yard .yard-sidebar { overflow-y: auto; }
+.radar-section .export-full-button + .export-full-button { margin-top: 8px; }
+.radar-help { color: var(--text-muted, #8c9891); font-size: 11px; line-height: 1.65; margin: 10px 0; }
+.radar-list { display: grid; gap: 6px; margin: 10px 0 14px; }
+.radar-list button { text-align: left; font-size: 11px; padding: 8px 10px; color: #dce5dc; background: #202a23; border: 1px solid #3a473d; border-left: 4px solid var(--radar-color); border-radius: 5px; cursor: pointer; }
+#add-radar[aria-pressed="true"] { border-color: #dfcf8e; color: #f2dfaa; }
+.radar-properties { position: absolute; z-index: 15; width: 272px; padding: 16px; border: 1px solid #556258; border-radius: 10px; background: #19241ff5; color: #e5eee4; box-shadow: 0 8px 32px #0006; }
+.radar-properties[hidden] { display: none; }
+.radar-properties-title { display: flex; justify-content: space-between; align-items: center; }
+.radar-properties-title button { color: #c6d2c6; background: none; border: 0; font-size: 24px; cursor: pointer; }
+.radar-properties p { margin: 8px 0 14px; color: #a4b4a7; font-size: 11px; line-height: 1.6; }
+.radar-properties .range-control { display: block; margin: 14px 0; }
+.radar-spacing { display: flex; justify-content: space-between; align-items: center; font-size: 12px; }
+.radar-spacing input { width: 68px; padding: 5px; background: #111c16; color: #edf3e9; border: 1px solid #536155; border-radius: 4px; }
+#delete-radar { width: 100%; padding: 8px; border: 1px solid #805e52; background: #38291f; color: #f0beab; border-radius: 5px; cursor: pointer; }
+.radar-properties { max-height: calc(100% - 74px); overflow-y: auto; max-width: calc(100% - 16px); }
+.radar-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.radar-fields label, .radar-estimate label { display: flex; flex-direction: column; gap: 4px; font-size: 10px; color: #a4b4a7; }
+.radar-fields input, .radar-estimate input { width: 100%; min-width: 0; padding: 6px; border: 1px solid #536155; border-radius: 4px; background: #111c16; color: #edf3e9; }
+.radar-select-label { display: flex; flex-direction: column; gap: 7px; font-size: 11px; margin: 12px 0; color: #a4b4a7; }
+.radar-select-label select { width: 100%; background: #17221b; border: 1px solid #536155; color: #dce5dc; border-radius: 4px; padding: 8px; }
+.radar-report { font-size: 10px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; color: #c3d2c4; }
+.radar-estimate { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 12px 0; }
+.radar-analysis details { font-size: 11px; color: #a4b4a7; }
+#scan-progress { width: 100%; height: 8px; margin-top: 10px; accent-color: var(--accent); }
+#snapshot-info { white-space: pre-wrap; overflow-wrap: anywhere; }
+.radar-section > .radar-spacing { margin: 14px 0; }
+.radar-section > .radar-spacing input { width: 66px; }
+#radar-validation { color: #f0beab; }
+.camera-axes { position: absolute; right: 16px; bottom: 16px; width: 112px; height: 112px; z-index: 7; pointer-events: none; user-select: none; }
+.radar-range-presets { display: flex; gap: 8px; margin: 10px 0; }
+.radar-range-presets button { flex: 1; padding: 6px; background: #202a23; color: #dce5dc; border: 1px solid #536155; border-radius: 4px; cursor: pointer; }
+.radar-beam-settings { margin: 14px 0; padding: 10px; min-width: 0; border: 1px solid #435346; border-radius: 6px; }
+.radar-beam-settings legend { padding: 0 5px; font-size: 11px; color: #c3d2c4; }
+.radar-beam-settings .radar-select-label { margin-top: 0; }
+.radar-beam-settings .radar-select-label input { width: 100%; padding: 6px; border: 1px solid #536155; border-radius: 4px; background: #111c16; color: #edf3e9; }

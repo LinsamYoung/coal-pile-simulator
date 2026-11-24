@@ -1,8 +1,16 @@
 import * as THREE from 'three'
+import { CameraAxes } from './CameraAxes'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import type { GridPointAddition, GridPointReplacement, PointCloudData, ToolMode } from '../types'
 import { createPointCloudGeometry } from '../io/PlyImporter'
 import { HeightField } from '../simulation/HeightField'
+
+interface SceneContext {
+  background: string
+  object: THREE.Object3D
+  occluder: THREE.Object3D
+  updateView(cameraPosition: THREE.Vector3): void
+}
 
 export class SceneController {
   readonly canvas: HTMLCanvasElement
@@ -21,8 +29,9 @@ export class SceneController {
   private generatedPoints: THREE.Points | null = null
   private field: HeightField | null = null
   private animationFrame = 0
+  private cameraAxes: CameraAxes | null = null
 
-  constructor(container: HTMLElement) {
+  constructor(container: HTMLElement, private readonly context?: SceneContext) {
     this.canvas = document.createElement('canvas')
     this.canvas.className = 'scene-canvas'
     container.append(this.canvas)
@@ -31,7 +40,7 @@ export class SceneController {
     this.renderer.outputColorSpace = THREE.SRGBColorSpace
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping
     this.renderer.toneMappingExposure = 1.05
-    this.scene.background = new THREE.Color('#111612')
+    this.scene.background = new THREE.Color(context?.background ?? '#111612')
     this.scene.fog = new THREE.FogExp2('#111612', 0.0025)
 
     this.camera.up.set(0, 0, 1)
@@ -45,19 +54,27 @@ export class SceneController {
     this.controls.mouseButtons.LEFT = -1 as THREE.MOUSE
     this.controls.mouseButtons.MIDDLE = THREE.MOUSE.PAN
     this.controls.mouseButtons.RIGHT = THREE.MOUSE.ROTATE
+    if (context) {
+      this.controls.touches.ONE = -1 as THREE.TOUCH
+      this.controls.touches.TWO = THREE.TOUCH.DOLLY_ROTATE
+    }
 
     this.scene.add(new THREE.HemisphereLight('#d8e9d4', '#293026', 1.8))
     const sun = new THREE.DirectionalLight('#fff3d8', 2.2)
     sun.position.set(-30, -25, 55)
     this.scene.add(sun)
 
-    const grid = new THREE.GridHelper(200, 100, '#39443b', '#252d27')
-    grid.rotation.x = Math.PI / 2
-    grid.position.z = -0.03
-    const gridMaterial = grid.material as THREE.LineBasicMaterial
-    gridMaterial.transparent = true
-    gridMaterial.opacity = 0.36
-    this.scene.add(grid)
+    if (context) {
+      this.scene.add(context.object)
+    } else {
+      const grid = new THREE.GridHelper(200, 100, '#39443b', '#252d27')
+      grid.rotation.x = Math.PI / 2
+      grid.position.z = -0.03
+      const gridMaterial = grid.material as THREE.LineBasicMaterial
+      gridMaterial.transparent = true
+      gridMaterial.opacity = 0.36
+      this.scene.add(grid)
+    }
 
     this.brushOverlay = this.createBrushOverlay()
     this.scene.add(this.brushOverlay)
@@ -125,7 +142,36 @@ export class SceneController {
     )
     this.raycaster.setFromCamera(this.pointer, this.camera)
     const hit = this.raycaster.intersectObject(this.coalMesh, false)[0]
+    if (hit && this.context) {
+      const wall = this.raycaster.intersectObject(this.context.occluder, false)[0]
+      if (wall && wall.distance < hit.distance) return null
+    }
     return hit?.point ?? null
+  }
+
+  enableCameraAxes(container: HTMLElement): void {
+    if (!this.cameraAxes) this.cameraAxes = new CameraAxes(container)
+  }
+
+  addOverlay(object: THREE.Object3D): void {
+    this.scene.add(object)
+  }
+
+  pickPlane(clientX: number, clientY: number, height: number): THREE.Vector3 | null {
+    this.prepareRay(clientX, clientY)
+    return this.raycaster.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 0, 1), -height), new THREE.Vector3())
+  }
+
+  pickOverlay(clientX: number, clientY: number, object: THREE.Object3D): THREE.Object3D | null {
+    this.prepareRay(clientX, clientY)
+    object.updateMatrixWorld(true)
+    return this.raycaster.intersectObject(object, true)[0]?.object ?? null
+  }
+
+  private prepareRay(clientX: number, clientY: number): void {
+    const bounds = this.canvas.getBoundingClientRect()
+    this.pointer.set(((clientX - bounds.left) / bounds.width) * 2 - 1, -((clientY - bounds.top) / bounds.height) * 2 + 1)
+    this.raycaster.setFromCamera(this.pointer, this.camera)
   }
 
   setBrush(point: THREE.Vector3 | null, radius: number, mode: ToolMode): void {
@@ -140,15 +186,25 @@ export class SceneController {
     }
   }
 
-  fitToField(field: HeightField): void {
+  fitToField(field: HeightField, circularView?: { outerRadius: number; topDown: boolean }): void {
     const width = (field.cols - 1) * field.cellSize
     const height = (field.rows - 1) * field.cellSize
     const size = Math.max(width, height, 10)
     const center = new THREE.Vector3(field.originX + width / 2, field.originY + height / 2, 0)
+    if (circularView) center.z = circularView.topDown ? 0 : 5
     this.controls.target.copy(center)
-    this.camera.position.set(center.x + size * 0.55, center.y - size * 0.78, size * 0.62)
-    this.camera.near = Math.max(0.02, size / 2_000)
-    this.camera.far = Math.max(500, size * 12)
+    if (circularView) {
+      const distance = circularView.outerRadius * 2.72 / Math.min(1, this.camera.aspect)
+      const direction = circularView.topDown
+        ? new THREE.Vector3(0, -0.001, 1)
+        : new THREE.Vector3(0.29, -0.63, 0.72)
+      this.camera.position.copy(center).addScaledVector(direction.normalize(), distance)
+    } else {
+      this.camera.position.set(center.x + size * 0.55, center.y - size * 0.78, size * 0.62)
+    }
+    const cameraDistance = this.camera.position.distanceTo(center)
+    this.camera.near = circularView ? cameraDistance / 200 : Math.max(0.02, size / 2_000)
+    this.camera.far = Math.max(500, size * 12, cameraDistance * 2)
     this.camera.updateProjectionMatrix()
     this.controls.update()
     const grid = this.scene.children.find((child) => child instanceof THREE.GridHelper)
@@ -192,6 +248,7 @@ export class SceneController {
   dispose(): void {
     cancelAnimationFrame(this.animationFrame)
     this.resizeObserver.disconnect()
+    this.cameraAxes?.element.remove()
     this.controls.dispose()
     this.renderer.dispose()
   }
@@ -228,6 +285,8 @@ export class SceneController {
   private animate = (): void => {
     this.animationFrame = requestAnimationFrame(this.animate)
     this.controls.update()
+    this.context?.updateView(this.camera.position)
+    this.cameraAxes?.update(this.camera)
     this.renderer.render(this.scene, this.camera)
   }
 }
@@ -244,21 +303,30 @@ function createHeightFieldGeometry(field: HeightField): THREE.BufferGeometry {
   const indexCount = (field.rows - 1) * (field.cols - 1) * 6
   const indices = field.size > 65_535 ? new Uint32Array(indexCount) : new Uint16Array(indexCount)
   let cursor = 0
+  const addTriangle = (a: number, b: number, c: number) => {
+    if (!field.enabled[a] || !field.enabled[b] || !field.enabled[c]) return
+    indices.set([a, b, c], cursor)
+    cursor += 3
+  }
   for (let row = 0; row < field.rows - 1; row += 1) {
     for (let col = 0; col < field.cols - 1; col += 1) {
       const a = field.index(row, col)
       const b = field.index(row, col + 1)
       const c = field.index(row + 1, col)
       const d = field.index(row + 1, col + 1)
-      // Alternating the diagonal avoids a visible, field-wide triangulation grain.
-      if ((row + col) % 2 === 0) indices.set([a, b, d, a, d, c], cursor)
-      else indices.set([a, b, c, b, d, c], cursor)
-      cursor += 6
+      // 交替使用对角线，避免整个场地出现方向一致的三角网纹理。
+      if ((row + col) % 2 === 0) {
+        addTriangle(a, b, d)
+        addTriangle(a, d, c)
+      } else {
+        addTriangle(a, b, c)
+        addTriangle(b, d, c)
+      }
     }
   }
   geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
   geometry.setAttribute('coalThickness', new THREE.BufferAttribute(field.coal.slice(), 1))
-  geometry.setIndex(new THREE.BufferAttribute(indices, 1))
+  geometry.setIndex(new THREE.BufferAttribute(indices.subarray(0, cursor), 1))
   geometry.computeBoundingSphere()
   return geometry
 }
