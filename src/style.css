@@ -78,12 +78,10 @@ kbd { padding: 3px 6px; margin-left: 7px; border: 1px solid #374039; border-bott
 .upload-zone > span:last-child { display: flex; flex-direction: column; gap: 3px; }
 .upload-zone b { font-size: 12px; font-weight: 500; }
 .upload-zone small, .file-card small { color: #707a72; font-size: 9px; }
-.file-card { display: grid; grid-template-columns: 38px 1fr 28px; align-items: center; gap: 10px; margin-top: 10px; padding: 10px; border: 1px solid #29312b; border-radius: 7px; background: #131815; }
+.file-card { display: grid; grid-template-columns: 38px 1fr; align-items: center; gap: 10px; margin-top: 10px; padding: 10px; border: 1px solid #29312b; border-radius: 7px; background: #131815; }
 .file-card > span:nth-child(2) { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .file-card b { overflow: hidden; color: #bfc7c1; font-size: 10px; font-weight: 500; white-space: nowrap; text-overflow: ellipsis; }
 .file-glyph { display: grid; place-items: center; width: 34px; height: 27px; border-radius: 4px; background: rgba(214,238,79,.09); color: var(--accent); font: 500 9px 'DM Mono', monospace; }
-.icon-button { width: 28px; height: 28px; border: 0; border-radius: 5px; background: transparent; color: #7e8980; cursor: pointer; }
-.icon-button:hover { background: #262e28; color: var(--accent); }
 
 .tool-switch { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .tool-button { display: flex; align-items: center; gap: 9px; padding: 11px 9px; border: 1px solid #333c35; border-radius: 7px; background: #131815; cursor: pointer; text-align: left; transition: .18s; }

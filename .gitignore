@@ -7,3 +7,5 @@ vite.config.d.ts
 .DS_Store
 /.idea/
 /.codegraph/
+/plan/
+/前端过滤后的煤场点云_20260811_153504.ply

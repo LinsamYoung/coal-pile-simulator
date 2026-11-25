@@ -130,12 +130,6 @@ function scalarByteSize(type: string): number {
   throw new Error(`不支持的 PLY 标量类型：${type}`)
 }
 
-export async function loadPlyFromUrl(url: string, sourceName: string): Promise<PointCloudData> {
-  const response = await fetch(url)
-  if (!response.ok) throw new Error(`样例点云加载失败（HTTP ${response.status}）。`)
-  return parsePly(await response.arrayBuffer(), sourceName)
-}
-
 export function createPointCloudGeometry(data: PointCloudData): THREE.BufferGeometry {
   const geometry = new THREE.BufferGeometry()
   geometry.setAttribute('position', new THREE.BufferAttribute(data.positions, 3))

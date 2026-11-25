@@ -1,6 +1,6 @@
 import './style.css'
 import type { BrushSettings, GridReplacementResult, PointCloudData, ToolMode } from './types'
-import { loadPlyFromUrl, parsePly } from './io/PlyImporter'
+import { parsePly } from './io/PlyImporter'
 import { downloadBlob, replaceCoveredPointsInSourcePly } from './io/PointCloudExporter'
 import { buildGroundGrid } from './simulation/GroundGridBuilder'
 import { applyBrushStroke } from './simulation/BrushEngine'
@@ -20,7 +20,7 @@ app.innerHTML = `
       </div>
       <div class="workspace-header">
         <a class="workspace-link" href="./circular-yard.html">圆形料场 <span aria-hidden="true">↗</span></a>
-        <div class="scene-status"><span class="status-dot"></span><span id="scene-status">正在准备场景</span></div>
+        <div class="scene-status"><span class="status-dot"></span><span id="scene-status">等待导入点云</span></div>
       </div>
       <div class="topbar-help"><kbd>中键</kbd> 平移 <kbd>右键</kbd> 旋转 <kbd>滚轮</kbd> 缩放</div>
     </header>
@@ -43,7 +43,6 @@ app.innerHTML = `
             <div class="file-card" id="file-card">
               <span class="file-glyph">PLY</span>
               <span><b id="file-name">尚未载入</b><small id="file-meta">等待点云文件</small></span>
-              <button id="reload-sample" class="icon-button" type="button" title="载入内置样例">↻</button>
             </div>
           </div>
 
@@ -149,7 +148,6 @@ setupGridExportControls()
 setupPointerEditing()
 setupClearDialog()
 requestAnimationFrame(paintLoop)
-void loadBundledSample()
 
 function element<T extends HTMLElement = HTMLElement>(id: string): T {
   return document.getElementById(id) as T
@@ -209,7 +207,6 @@ function setupFileImport(): void {
     if (!file || !file.name.toLowerCase().endsWith('.ply')) return showToast('请选择 .ply 点云文件', true)
     void loadUserFile(file)
   })
-  element('reload-sample').addEventListener('click', () => void loadBundledSample())
 }
 
 function setupGridExportControls(): void {
@@ -290,18 +287,6 @@ function setupClearDialog(): void {
     updateGridResult()
     showToast('动态煤堆已清空，场地点云保持不变')
   })
-}
-
-async function loadBundledSample(): Promise<void> {
-  setLoading(true, '正在载入内置煤场点云')
-  try {
-    const sampleUrl = new URL('../前端过滤后的煤场点云_20260811_153504.ply', import.meta.url).href
-    await acceptPointCloud(await loadPlyFromUrl(sampleUrl, '前端过滤后的煤场点云_20260811_153504.ply'))
-  } catch (error) {
-    handleError(error)
-  } finally {
-    setLoading(false)
-  }
 }
 
 async function loadUserFile(file: File): Promise<void> {
