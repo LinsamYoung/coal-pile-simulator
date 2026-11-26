@@ -166,12 +166,6 @@ input[type='number']::-webkit-inner-spin-button { opacity: .3; }
 .tool-hud em { color: #a3ada5; font: normal 9px 'DM Mono', monospace; }
 .tool-hud.is-excavate { border-color: rgba(245,157,96,.25); }
 .tool-hud.is-excavate > span { background: #f0a066; }
-.axis-widget { position: absolute; right: 24px; bottom: 22px; width: 58px; height: 58px; color: #8b958d; font: 8px 'DM Mono', monospace; pointer-events: none; }
-.axis-widget::before { content: ''; position: absolute; width: 1px; height: 38px; left: 28px; top: 4px; background: #e5d15c; transform: rotate(0deg); transform-origin: bottom; }
-.axis-widget::after { content: ''; position: absolute; width: 1px; height: 32px; left: 28px; top: 11px; background: #61c8d3; transform: rotate(-52deg); transform-origin: bottom; }
-.axis-widget i { position: absolute; font-style: normal; }
-.axis-z { top: -2px; left: 25px; color: #e5d15c; }.axis-y { top: 9px; left: -1px; color: #61c8d3; }.axis-x { right: 2px; bottom: 1px; color: #dc7d66; }
-.axis-widget .axis-x::before { content: ''; position: absolute; width: 1px; height: 34px; right: 15px; bottom: 7px; background: #dc7d66; transform: rotate(55deg); transform-origin: bottom; }
 
 .loading-overlay { position: absolute; inset: 0; z-index: 8; display: flex; visibility: hidden; align-items: center; justify-content: center; flex-direction: column; opacity: 0; background: rgba(14,18,15,.78); backdrop-filter: blur(8px); transition: .2s; }
 .loading-overlay.is-visible { visibility: visible; opacity: 1; }
@@ -231,7 +225,7 @@ dialog .confirm-clear { border-color: transparent; background: #db7952; color: #
   .stats-panel { top: 12px; right: 12px; flex-direction: row; }
   .stats-panel > div { min-width: 80px; padding: 8px; border-bottom: 0; border-right: 1px solid var(--line); }
   .stats-panel span { margin-bottom: 3px; }.stats-panel b { font-size: 12px; }
-  .viewport-badge, .axis-widget, .compass { display: none; }
+  .viewport-badge, .compass { display: none; }
   .yard-view-controls { top: auto; bottom: 9px; left: 9px; }
   .circular-yard .stats-panel { top: 9px; right: 9px; }
 }

@@ -110,7 +110,6 @@ app.innerHTML = `
         <div><span>最大堆高</span><b id="stat-height">0.00</b><em>m</em></div>
       </div>
       <div class="tool-hud" id="tool-hud"><span>＋</span><div><small>当前工具</small><b>倒入煤堆</b></div><i></i><em>半径 3.0 m</em></div>
-      <div class="axis-widget" aria-hidden="true"><i class="axis-z">Z</i><i class="axis-y">Y</i><i class="axis-x">X</i></div>
     </main>
   </div>
   <dialog id="clear-dialog">
@@ -124,6 +123,7 @@ app.innerHTML = `
 `
 
 const scene = new SceneController(element('viewport'))
+scene.enableCameraAxes(element('viewport'))
 let field: HeightField | null = null
 let sourcePointCloud: PointCloudData | null = null
 let gridResult: GridReplacementResult | null = null
